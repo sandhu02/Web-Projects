@@ -3,4 +3,6 @@ node_modules/
 .env
 .env.local
 
+.fir-pushnotifications-176af-firebase-adminsdk-fbsvc-f05b7c2e31.json
+
 .vscode/
