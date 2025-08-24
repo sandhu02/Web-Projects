@@ -7,6 +7,8 @@ const jwt = require('jsonwebtoken')
 const cors = require('cors');
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
+const admin = require("firebase-admin")
+const serviceAccount = require("./fir-pushnotifications-176af-firebase-adminsdk-fbsvc-f05b7c2e31.json");
 
 const app = express()
 
@@ -22,6 +24,10 @@ const io = new Server(server, {
         methods: ["GET", "POST"]
     }
 });
+
+admin.initializeApp(    //for firebase
+    { credential: admin.credential.cert(serviceAccount) }    
+);
 
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
@@ -47,7 +53,8 @@ mongoose.connect(process.env.MONGODB_CONNECTION, {
 const userSchema = new mongoose.Schema({
     name: { type: String, required: true },
     username: { type: String, required: true, unique: true },
-    password: { type: String, required: true }
+    password: { type: String, required: true },
+    fcmTokens: { type: [String], default: [] }
 });
 const videoSchema = new mongoose.Schema({
     url: { type: String, required: true },
@@ -119,7 +126,7 @@ app.post("/login" , async (req ,res) => {
         )
     }
     
-    const token = jwt.sign({ id: mongodbUser._id }, process.env.JWT_SECRET, { expiresIn: '30m' });
+    const token = jwt.sign({ id: mongodbUser._id }, process.env.JWT_SECRET, { expiresIn: '10d' });
     res.status(200).json(
         { 
             success: true,
@@ -200,6 +207,45 @@ app.delete("/videos" , verifyToken ,async (req,res) => {
 app.get("/home", verifyToken, async (req,res)=>{
     const user = await User.findById(req.user.id)
     res.render("home.ejs",{user : user})
+})
+
+app.post("/registerNotification" , verifyToken , async (req,res) => {
+    const {username , fcmtoken} = req.body
+    await User.updateOne(
+        {username : username},
+        { $addToSet: { fcmTokens: fcmtoken } }
+    )
+
+    res.json({ success: true , message : "FCM token inserted successfuly"});
+})
+
+app.post("/notification" ,verifyToken ,async (req,res) => {
+    const { title, body } = req.body;
+    const username = req.query.username;
+
+    try{    
+        const user = await User.findOne({username})
+        console.log(user.fcmTokens[0])
+        if (!user || !user.fcmTokens || user.fcmTokens.length === 0) {
+            return res.json({ success: false, message: "No tokens found for user" });
+        }
+
+        const message = {
+            notification: {
+                title: title,
+                body: body
+            },
+            tokens : user.fcmTokens
+        };
+
+        const response = await admin.messaging().sendEachForMulticast(message)
+
+        res.json({ success: true, message: "Notification sent", response });
+    }    
+    catch(error) {
+        console.log("Error sending message:", error);
+        res.send( {success : false , message : error.message} )
+    };
 })
 
 function verifyToken(req,res,next){
